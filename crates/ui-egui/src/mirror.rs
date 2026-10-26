@@ -240,8 +240,8 @@ impl View {
             mirror_clipped(span, canvas, field, clipped);
         }
         if let Some(ime) = &mut output.platform_output.ime {
-            ime.rect = self.place(span, ime.rect);
-            ime.cursor_rect = self.place(span, ime.cursor_rect);
+            ime.rect = self.place_ime(span, ime.rect);
+            ime.cursor_rect = self.place_ime(span, ime.cursor_rect);
         }
         // Screen readers, magnifiers and their hit testing find each element where it is drawn.
         if let Some(update) = &mut output.platform_output.accesskit_update {
@@ -252,6 +252,18 @@ impl View {
                 }
             }
         }
+    }
+
+    /// Where the input method's rectangle (`r`, logical) is drawn. It is the field being edited's,
+    /// or else the page caret's, which moves with the page even under a menu or the Focus ribbon
+    /// dropped over it, as the caret itself does.
+    fn place_ime(&self, span: (f32, f32), r: Rect) -> Rect {
+        if self.field.is_none()
+            && let Some(c) = self.canvas.filter(|c| c.expand(1.0).contains_rect(r))
+        {
+            return r.translate(Vec2::new(keep_shift(span, c), 0.0));
+        }
+        self.place(span, r)
     }
 
     /// Where an element of the frame (`r`, logical) is drawn, as the pointer finds it: a popup
@@ -685,6 +697,10 @@ mod tests {
         assert_eq!(m.place(SPAN, r(52.0, 56.0, 5.0)), r(44.0, 48.0, 5.0), "a dialog over the page: flipped");
         assert_eq!(m.place(SPAN, r(12.0, 14.0, 32.0)), r(56.0, 58.0, 32.0), "a popup from the page: about its axis");
         assert_eq!(m.place(SPAN, r(80.0, 90.0, 5.0)), r(10.0, 20.0, 5.0), "the interface: flipped");
+        // The page's caret under a menu over the page (the Focus ribbon) moves with the page.
+        assert_eq!(m.place_ime(SPAN, r(52.0, 53.0, 5.0)), r(92.0, 93.0, 5.0), "the input method at the page's caret");
+        let editing = View { span: Some(SPAN), field: Some(r(50.0, 70.0, 4.0).expand(2.0)), field_shift: Some(-30.0), ..view(Some(canvas)) };
+        assert_eq!(editing.place_ime(SPAN, r(52.0, 53.0, 5.0)), r(22.0, 23.0, 5.0), "a field being edited: with its text");
         let ctx = Context::default();
         let second = ViewportId::from_hash_of("second window");
         ctx.add_plugin(Mirror { views: HashMap::from([(second, m)]), ending: None });
