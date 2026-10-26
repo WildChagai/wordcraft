@@ -1355,6 +1355,9 @@ impl WordApp {
             return;
         }
         self.font_generation = generation;
+        // A face added since may have the interface language's letters: look for them again.
+        self.fonts_lang = None;
+        self.fonts_language_names = false;
         self.session.relayout();
         self.previews.fonts_changed(ctx, db.user_fonts().iter().flat_map(|f| f.families()));
         ctx.request_repaint();
