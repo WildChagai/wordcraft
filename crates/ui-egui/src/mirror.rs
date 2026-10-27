@@ -106,6 +106,11 @@ impl View {
         if let Some(r) = input.screen_rect {
             self.span = Some((r.min.x, r.max.x));
         }
+        // A release that never came (the window lost focus mid-drag, or the mirror was off) must
+        // not hold the next press to an old mapping.
+        if !self.on || input.events.iter().any(|e| matches!(e, Event::WindowFocused(false))) {
+            self.drag = None;
+        }
         let Some(span) = self.span.filter(|_| self.on) else { return };
         // Areas kept unflipped, with how far each moves: the field being edited and the page.
         let field = self.field.map(|f| (f, self.field_shift.unwrap_or_else(|| keep_shift(span, f))));
@@ -210,7 +215,11 @@ impl View {
         let mut placed = Vec::new();
         for layer in layers {
             let Some(area) = ctx.memory(|m| m.area_rect(layer.id)).filter(|r| r.is_positive()) else { continue };
-            let sum = 2.0 * area.min.x + d;
+            // Drawn at `sum - x`: kept on screen, as egui keeps it in its own coordinates.
+            let mut sum = 2.0 * area.min.x + d;
+            if area.width() <= span.1 - span.0 {
+                sum = sum.clamp(span.0 + area.max.x, span.1 + area.min.x);
+            }
             let shift = Vec2::new(span.0 + span.1 - sum, 0.0);
             let found = ctx.graphics_mut(|g| {
                 let Some(list) = g.get_mut(layer) else { return false };
@@ -610,6 +619,65 @@ mod tests {
             matches!(input.events[3], Event::PointerMoved(p) if p == pos2(40.0, 6.0)),
             "after the release, the page's mapping (moved, not flipped to 20)"
         );
+    }
+
+    /// A drag whose release never comes (the window lost focus, or the mirror was turned off)
+    /// doesn't hold the next press to its mapping.
+    #[test]
+    fn a_drag_cut_short_lets_go_of_its_mapping() {
+        let canvas = Rect::from_min_max(pos2(0.0, 0.0), pos2(60.0, 50.0));
+        let button = |pos, pressed| Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let frame = |m: &mut View, events| {
+            let mut input = RawInput { screen_rect: Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 80.0))), events, ..Default::default() };
+            m.input(&mut input);
+            input.events
+        };
+        // Pressed on a dialog (flipped), then focus lost before the release.
+        for cut in [vec![Event::WindowFocused(false)], vec![]] {
+            let mut m = View { floating: vec![Rect::from_min_max(pos2(50.0, 0.0), pos2(75.0, 40.0))], ..view(Some(canvas)) };
+            frame(&mut m, vec![button(pos2(30.0, 5.0), true)]);
+            assert!(m.drag.is_some());
+            if cut.is_empty() {
+                m.on = false;
+                frame(&mut m, vec![]);
+                m.on = true;
+            } else {
+                frame(&mut m, cut);
+            }
+            let events = frame(&mut m, vec![button(pos2(90.0, 5.0), true)]);
+            assert!(matches!(events[0], Event::PointerButton { pos, .. } if pos == pos2(50.0, 5.0)), "a press on the page: moved, not flipped to 10");
+        }
+    }
+
+    /// A popup opened from the page near the window's left edge opens leftwards in a mirrored
+    /// interface: it is kept on screen, as egui keeps it in its own coordinates.
+    #[test]
+    fn popups_from_the_page_stay_on_screen() {
+        let ctx = Context::default();
+        let popup = egui::Id::unique("popup near the edge");
+        // The page is laid out at 0–300 and drawn at 100–400; the popup is 150 wide at 10.
+        configure(&ctx, true, Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0))), &[popup]);
+        let screen = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0))), ..Default::default() };
+        let mut drawn = None;
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(screen.clone(), |ui| {
+                egui::Area::new(popup).fixed_pos(pos2(10.0, 20.0)).show(ui.ctx(), |ui| {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(150.0, 40.0), egui::Sense::hover());
+                    ui.painter().rect_filled(r, 0.0, Color32::RED);
+                });
+            });
+            out.textures_delta.clear();
+            drawn = out.shapes.iter().find_map(|c| match &c.shape {
+                // Red, faded in or not.
+                Shape::Rect(r) if r.fill.r() > 0 && r.fill.g() == 0 && r.fill.b() == 0 => Some(r.rect),
+                _ => None,
+            });
+        }
+        let r = drawn.expect("the popup is painted");
+        assert!((r.min.x - 0.0).abs() < 0.5 && (r.max.x - 150.0).abs() < 0.5, "kept at the left edge, not at -40: {r:?}");
+        let handle = ctx.plugin_opt::<Mirror>().expect("the mirror is on");
+        let m = handle.lock();
+        assert_eq!(m.views[&ViewportId::ROOT].anchored_rects.first().map(|a| a.1), Some(160.0), "clicks map through the same axis");
     }
 
     /// Hebrew typed into a field, laid out right to left by egui: in a mirrored interface the

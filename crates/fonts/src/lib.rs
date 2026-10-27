@@ -187,16 +187,21 @@ pub fn shape(face: &FontFace, text: &str, features: &[Feature], map: impl Fn(cha
 
 /// [`shape`] in visual order for a one-line, left-to-right label drawn without the line layout
 /// (a font list entry): direction runs left to right, a right-to-left run's glyphs in the order
-/// they're drawn, so a Hebrew name doesn't come out backwards.
+/// they're drawn, so a Hebrew name doesn't come out backwards. The runs are the Unicode bidi
+/// algorithm's for a left-to-right line, so numbers in a Hebrew name keep their digits in order.
 pub fn shape_visual(face: &FontFace, text: &str, features: &[Feature], map: impl Fn(char) -> char) -> Vec<ShapedGlyph> {
     let mut out = Vec::with_capacity(text.len());
-    for (r, rtl) in direction_runs(text) {
-        let Some(sub) = text.get(r.clone()) else { continue };
-        let mut g = shape_dir(face, sub, features, &map, rtl);
-        for x in &mut g {
-            x.cluster += r.start;
+    let info = unicode_bidi::BidiInfo::new(text, Some(unicode_bidi::Level::ltr()));
+    for para in &info.paragraphs {
+        let (levels, runs) = info.visual_runs(para, para.range.clone());
+        for r in runs {
+            let Some(sub) = text.get(r.clone()) else { continue };
+            let mut g = shape_dir(face, sub, features, &map, levels[r.start].is_rtl());
+            for x in &mut g {
+                x.cluster += r.start;
+            }
+            out.extend(g);
         }
-        out.extend(g);
     }
     out
 }
@@ -373,6 +378,8 @@ mod tests {
         assert_eq!(clusters("Ab"), vec![0, 1]);
         assert_eq!(clusters("אבג"), vec![4, 2, 0]);
         assert_eq!(clusters("A אב"), vec![0, 1, 4, 2]);
+        // A number in a Hebrew name keeps its digits in order, at the left of the letters.
+        assert_eq!(clusters("אב 12"), vec![5, 6, 4, 2, 0]);
     }
 
     #[test]
