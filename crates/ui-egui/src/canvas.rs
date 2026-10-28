@@ -172,6 +172,9 @@ pub struct CanvasState {
     pub(crate) context_menu_id: Option<egui::Id>,
     /// The canvas with its rulers this frame, when the document is on screen.
     pub(crate) view_rect: Option<Rect>,
+    /// Whether this frame's balloons are floating comments, painted in a layer over the page
+    /// (a mirrored interface flips them with it), rather than in the margin, with the page.
+    pub(crate) balloons_float: bool,
     /// The frame drawn around the equation being edited, on screen (its options strip opens the
     /// equation's menu).
     pub eq_options: Option<EquationFrame>,
@@ -391,6 +394,7 @@ impl Default for CanvasState {
             context_menu_at: None,
             context_menu_id: None,
             view_rect: None,
+            balloons_float: false,
             eq_options: None,
             mini_anchor: None,
             mini_dismissed: None,

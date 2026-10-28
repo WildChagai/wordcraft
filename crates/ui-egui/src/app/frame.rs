@@ -101,7 +101,10 @@ impl WordApp {
                 .map(|(name, anchor)| (egui::Id::unique(name), anchor)),
             )
             .collect();
-        mirror::configure(ctx, i18n::current().rtl(), self.canvas.view_rect, &anchored);
+        // Floating comment cards are painted over the page, outside any area egui sizes.
+        let overlays: Vec<egui::Rect> =
+            if self.canvas.balloons_float { self.canvas.balloon_rects.iter().map(|(_, r)| *r).collect() } else { Vec::new() };
+        mirror::configure(ctx, i18n::current().rtl(), self.canvas.view_rect, &anchored, &overlays);
         content_controls::popup(self, ctx);
         dialogs::show(self, ctx);
         if moved(self) {

@@ -19,6 +19,9 @@ pub fn inspect(app: &mut WordApp, ctx: &egui::Context) -> Value {
     let r = ctx.input_for(viewport, |i| i.content_rect());
     // Where they are drawn (a right-to-left interface draws the page moved): what ui.click takes.
     let drawn = |r: egui::Rect| crate::mirror::page_to_window(ctx, viewport, r);
+    // Balloons in the margin move with the page; floating comments flip with the interface.
+    let float = app.canvas.balloons_float;
+    let balloon = |r: egui::Rect| if float { crate::mirror::interface_to_window(ctx, viewport, r) } else { drawn(r) };
     let caret = crate::canvas::caret_screen(app).map(|(p, h)| {
         let p = drawn(egui::Rect::from_min_size(p, egui::Vec2::ZERO)).min;
         json!({"x": p.x, "y": p.y, "h": h})
@@ -32,7 +35,7 @@ pub fn inspect(app: &mut WordApp, ctx: &egui::Context) -> Value {
         "pages": app.canvas.page_rects.iter().map(|r| drawn(*r)).map(|r| [r.left(), r.top(), r.width(), r.height()]).collect::<Vec<_>>(),
         "scale": app.canvas.scale,
         "caret": caret,
-        "balloons": app.canvas.balloon_rects.iter().map(|(id, r)| (id, crate::mirror::element_to_window(ctx, viewport, *r))).map(|(id, r)| json!({"id": id, "rect": [r.left(), r.top(), r.width(), r.height()]})).collect::<Vec<_>>(),
+        "balloons": app.canvas.balloon_rects.iter().map(|(id, r)| (id, balloon(*r))).map(|(id, r)| json!({"id": id, "rect": [r.left(), r.top(), r.width(), r.height()]})).collect::<Vec<_>>(),
         "balloon": app.canvas.balloon,
         "focused": app.canvas.focused,
         "title": app.title_stem(),

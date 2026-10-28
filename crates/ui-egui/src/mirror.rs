@@ -70,6 +70,9 @@ struct View {
     /// The other menus, popups and windows on screen (logical): they're flipped with the
     /// interface, and the pointer over one goes to it even where it's drawn over the page.
     floating: Vec<Rect>,
+    /// Cards painted in a layer over the page that egui doesn't size by them (floating
+    /// comments): floating too.
+    overlays: Vec<Rect>,
     /// How many of the frame's shapes are those of menus, popups and windows. They come after
     /// the page and the panels (egui paints background layers first), and are never the page's
     /// even where they lie over it: a dialog's text box or check mark there is flipped too.
@@ -212,6 +215,7 @@ impl View {
         });
         self.floating =
             layers.into_iter().filter_map(|l| egui::containers::AreaState::load(ctx, l.id).filter(|s| s.interactable).map(|s| s.rect())).collect();
+        self.floating.extend(self.overlays.iter().copied());
         let Some(canvas) = self.canvas else { return };
         // Tooltips follow the pointer: over the page they belong to the page.
         const ORDERS: [Order; 5] = [Order::Background, Order::Middle, Order::Foreground, Order::Tooltip, Order::Debug];
@@ -318,8 +322,10 @@ pub fn active(ctx: &Context) -> bool {
 
 /// Turn the mirror on (a right-to-left interface) or off for the window being drawn. `canvas` is
 /// the document canvas with its rulers when it is on screen, `anchored` the area ids of popups
-/// placed from it, with how each is mirrored. Call once per frame, after the interface is laid out.
-pub fn configure(ctx: &Context, on: bool, canvas: Option<Rect>, anchored: &[(Id, Anchor)]) {
+/// placed from it, with how each is mirrored, and `overlays` cards painted over it in a layer
+/// egui doesn't size by them (floating comments). Call once per frame, after the interface is
+/// laid out.
+pub fn configure(ctx: &Context, on: bool, canvas: Option<Rect>, anchored: &[(Id, Anchor)], overlays: &[Rect]) {
     if ctx.plugin_opt::<Mirror>().is_none() {
         ctx.add_plugin(Mirror::default());
     }
@@ -329,6 +335,7 @@ pub fn configure(ctx: &Context, on: bool, canvas: Option<Rect>, anchored: &[(Id,
         view.on = on;
         view.canvas = canvas;
         view.anchored = anchored.to_vec();
+        view.overlays = overlays.to_vec();
     }
 }
 
@@ -343,14 +350,13 @@ pub fn page_to_window(ctx: &Context, viewport: ViewportId, r: Rect) -> Rect {
     }
 }
 
-/// Where the mirror draws `r`, an element of the frame of the window `viewport` (logical), as
-/// the pointer finds it: on the page it moves with it, over the page in a floating layer (a
-/// floating comment) it flips with the interface.
-pub fn element_to_window(ctx: &Context, viewport: ViewportId, r: Rect) -> Rect {
+/// Where the mirror draws `r`, laid out in the interface of the window `viewport` (a menu, or a
+/// floating comment over the page): flipped with the interface.
+pub fn interface_to_window(ctx: &Context, viewport: ViewportId, r: Rect) -> Rect {
     let Some(handle) = ctx.plugin_opt::<Mirror>() else { return r };
     let m = handle.lock();
-    match m.views.get(&viewport) {
-        Some(view) if view.on => view.span.map_or(r, |span| view.place(span, r)),
+    match m.views.get(&viewport).map(|v| (v.on, v.span)) {
+        Some((true, Some(span))) => flip_rect(span, r),
         _ => r,
     }
 }
@@ -682,7 +688,7 @@ mod tests {
     fn popup_from_the_page(anchor: Anchor, x: f32) -> (Rect, Option<f32>) {
         let ctx = Context::default();
         let popup = egui::Id::unique("popup from the page");
-        configure(&ctx, true, Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0))), &[(popup, anchor)]);
+        configure(&ctx, true, Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0))), &[(popup, anchor)], &[]);
         let screen = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0))), ..Default::default() };
         let mut drawn = None;
         for _ in 0..3 {
@@ -702,6 +708,36 @@ mod tests {
         let handle = ctx.plugin_opt::<Mirror>().expect("the mirror is on");
         let axis = handle.lock().views[&ViewportId::ROOT].anchored_rects.first().map(|a| a.1);
         (drawn.expect("the popup is painted"), axis)
+    }
+
+    /// A floating comment is painted in a layer over the page that egui doesn't size by its cards
+    /// (they're painted, not allocated). Told of the card, the mirror flips the pointer over it
+    /// with the interface, as the card is drawn, so a click on the card as drawn reaches it.
+    #[test]
+    fn a_click_on_a_floating_comment_reaches_it() {
+        let ctx = Context::default();
+        // The page is laid out at 0–300 and drawn at 100–400; the card at 200–250 is drawn
+        // flipped, at 150–200, where it's clicked.
+        let card = Rect::from_min_max(pos2(200.0, 50.0), pos2(250.0, 80.0));
+        let at = pos2(175.0, 65.0);
+        let press = |pressed| Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let mut clicked = false;
+        for events in [vec![], vec![], vec![Event::PointerMoved(at), press(true)], vec![press(false)]] {
+            configure(&ctx, true, Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0))), &[], &[card]);
+            let input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                egui::Area::new(egui::Id::unique("floating comment"))
+                    .order(Order::Foreground)
+                    .fixed_pos(Pos2::ZERO)
+                    .sense(egui::Sense::hover())
+                    .show(ui.ctx(), |ui| {
+                        ui.painter().rect_filled(card, 0.0, Color32::RED);
+                        clicked |= ui.interact(card, egui::Id::unique("card"), egui::Sense::click()).clicked();
+                    });
+            });
+            out.textures_delta.clear();
+        }
+        assert!(clicked, "the click on the card as drawn reaches it");
     }
 
     /// A popup opened from the page near the window's left edge opens leftwards in a mirrored
@@ -736,14 +772,14 @@ mod tests {
         fonts.font_data.insert("hebrew".into(), Arc::new(egui::FontData::from_owned(face.data().to_vec())));
         fonts.families.entry(egui::FontFamily::Proportional).or_default().push("hebrew".into());
         ctx.set_fonts(fonts);
-        configure(&ctx, true, None, &[]);
+        configure(&ctx, true, None, &[], &[]);
         let id = egui::Id::unique("hebrew field");
         let mut text = String::from("אני רק בודק");
         let screen = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 300.0))), ..Default::default() };
         let mut placed = None;
         let mut frame = |ctx: &Context, text: &mut String| {
             let mut out = ctx.run_ui(screen.clone(), |ui| {
-                configure(ui.ctx(), true, None, &[]);
+                configure(ui.ctx(), true, None, &[], &[]);
                 let out = egui::TextEdit::singleline(text).id(id).desired_width(300.0).show(ui);
                 out.response.request_focus();
                 placed = Some((out.response.rect, out.text_clip_rect));
@@ -816,9 +852,8 @@ mod tests {
         ctx.add_plugin(Mirror { views: HashMap::from([(second, m)]), ending: None });
         assert_eq!(page_to_window(&ctx, second, r(5.0, 9.0, 5.0)), r(45.0, 49.0, 5.0), "ui.inspect's page rectangles, as drawn");
         assert_eq!(page_to_window(&ctx, ViewportId::ROOT, r(5.0, 9.0, 5.0)), r(5.0, 9.0, 5.0), "another window isn't mirrored");
-        assert_eq!(element_to_window(&ctx, second, r(5.0, 9.0, 5.0)), r(45.0, 49.0, 5.0), "a balloon in the margin: with the page");
-        assert_eq!(element_to_window(&ctx, second, r(52.0, 56.0, 5.0)), r(44.0, 48.0, 5.0), "a floating comment: flipped");
-        assert_eq!(element_to_window(&ctx, ViewportId::ROOT, r(52.0, 56.0, 5.0)), r(52.0, 56.0, 5.0), "another window isn't mirrored");
+        assert_eq!(interface_to_window(&ctx, second, r(52.0, 56.0, 5.0)), r(44.0, 48.0, 5.0), "a floating comment: flipped");
+        assert_eq!(interface_to_window(&ctx, ViewportId::ROOT, r(52.0, 56.0, 5.0)), r(52.0, 56.0, 5.0), "another window isn't mirrored");
     }
 
     /// Each window is mirrored on its own: what one window's pass learns (its size, its page)
