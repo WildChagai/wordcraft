@@ -39,6 +39,15 @@ enum Mapping {
     Moved(f32),
 }
 
+/// How a popup placed from the page is mirrored.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Anchor {
+    /// Opened rightwards from a point on the page (its left edge): it opens leftwards from it.
+    Edge,
+    /// Placed over the page (under a field, centred on it): it stays there, mirrored inside.
+    InPlace,
+}
+
 /// The plugin; [`configure`] sets it up each frame, for the window being drawn.
 #[derive(Default)]
 pub struct Mirror {
@@ -53,8 +62,8 @@ struct View {
     on: bool,
     /// The document canvas (logical coordinates), when it is on screen.
     canvas: Option<Rect>,
-    /// Popups placed from document coordinates (their area ids).
-    anchored: Vec<Id>,
+    /// Popups placed from document coordinates (their area ids), and how each is mirrored.
+    anchored: Vec<(Id, Anchor)>,
     /// Where those popups were this frame (logical), with the axis they were mirrored about (as
     /// the sum `x + x'`), for the pointer.
     anchored_rects: Vec<(Rect, f32)>,
@@ -196,7 +205,9 @@ impl View {
         let layers: Vec<LayerId> = ctx.memory(|m| {
             let areas = m.areas();
             m.layer_ids()
-                .filter(|l| matches!(l.order, Order::Middle | Order::Foreground) && areas.is_visible(l) && !anchored.contains(&l.id))
+                .filter(|l| {
+                    matches!(l.order, Order::Middle | Order::Foreground) && areas.is_visible(l) && !anchored.iter().any(|(id, _)| *id == l.id)
+                })
                 .collect()
         });
         self.floating =
@@ -204,19 +215,24 @@ impl View {
         let Some(canvas) = self.canvas else { return };
         // Tooltips follow the pointer: over the page they belong to the page.
         const ORDERS: [Order; 5] = [Order::Background, Order::Middle, Order::Foreground, Order::Tooltip, Order::Debug];
-        let mut layers: Vec<LayerId> = self.anchored.iter().flat_map(|id| ORDERS.map(|o| LayerId::new(o, *id))).collect();
+        let mut layers: Vec<(LayerId, Anchor)> =
+            self.anchored.iter().flat_map(|&(id, anchor)| ORDERS.map(|o| (LayerId::new(o, id), anchor))).collect();
         if ctx.pointer_hover_pos().is_some_and(|p| canvas.contains(p)) {
-            layers.extend(ctx.memory(|m| m.layer_ids().filter(|l| l.order == Order::Tooltip).collect::<Vec<_>>()));
+            layers.extend(ctx.memory(|m| m.layer_ids().filter(|l| l.order == Order::Tooltip).map(|l| (l, Anchor::Edge)).collect::<Vec<_>>()));
         }
         // A popup opens rightwards from logical point `a` (its left edge), which is drawn at
         // `a + d` with the page. Moved here and flipped with everything else, it is mirrored about
-        // that point: `x' = 2a + d - x`, so it opens leftwards from it.
+        // that point: `x' = 2a + d - x`, so it opens leftwards from it. One placed over the page
+        // is mirrored about its own centre instead, and stays where it was, moved with the page.
         let d = keep_shift(span, canvas);
         let mut placed = Vec::new();
-        for layer in layers {
+        for (layer, anchor) in layers {
             let Some(area) = ctx.memory(|m| m.area_rect(layer.id)).filter(|r| r.is_positive()) else { continue };
             // Drawn at `sum - x`: kept on screen, as egui keeps it in its own coordinates.
-            let mut sum = 2.0 * area.min.x + d;
+            let mut sum = match anchor {
+                Anchor::Edge => 2.0 * area.min.x,
+                Anchor::InPlace => area.min.x + area.max.x,
+            } + d;
             if area.width() <= span.1 - span.0 {
                 sum = sum.clamp(span.0 + area.max.x, span.1 + area.min.x);
             }
@@ -302,8 +318,8 @@ pub fn active(ctx: &Context) -> bool {
 
 /// Turn the mirror on (a right-to-left interface) or off for the window being drawn. `canvas` is
 /// the document canvas with its rulers when it is on screen, `anchored` the area ids of popups
-/// placed from it. Call once per frame, after the interface is laid out.
-pub fn configure(ctx: &Context, on: bool, canvas: Option<Rect>, anchored: &[Id]) {
+/// placed from it, with how each is mirrored. Call once per frame, after the interface is laid out.
+pub fn configure(ctx: &Context, on: bool, canvas: Option<Rect>, anchored: &[(Id, Anchor)]) {
     if ctx.plugin_opt::<Mirror>().is_none() {
         ctx.add_plugin(Mirror::default());
     }
@@ -649,19 +665,17 @@ mod tests {
         }
     }
 
-    /// A popup opened from the page near the window's left edge opens leftwards in a mirrored
-    /// interface: it is kept on screen, as egui keeps it in its own coordinates.
-    #[test]
-    fn popups_from_the_page_stay_on_screen() {
+    /// A red popup 150 wide placed from the page at `x`, in a mirrored 400-wide window whose page
+    /// is laid out at 0–300 and drawn at 100–400: where it is drawn, and the axis clicks map through.
+    fn popup_from_the_page(anchor: Anchor, x: f32) -> (Rect, Option<f32>) {
         let ctx = Context::default();
-        let popup = egui::Id::unique("popup near the edge");
-        // The page is laid out at 0–300 and drawn at 100–400; the popup is 150 wide at 10.
-        configure(&ctx, true, Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0))), &[popup]);
+        let popup = egui::Id::unique("popup from the page");
+        configure(&ctx, true, Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0))), &[(popup, anchor)]);
         let screen = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0))), ..Default::default() };
         let mut drawn = None;
         for _ in 0..3 {
             let mut out = ctx.run_ui(screen.clone(), |ui| {
-                egui::Area::new(popup).fixed_pos(pos2(10.0, 20.0)).show(ui.ctx(), |ui| {
+                egui::Area::new(popup).fixed_pos(pos2(x, 20.0)).show(ui.ctx(), |ui| {
                     let (r, _) = ui.allocate_exact_size(egui::vec2(150.0, 40.0), egui::Sense::hover());
                     ui.painter().rect_filled(r, 0.0, Color32::RED);
                 });
@@ -673,11 +687,27 @@ mod tests {
                 _ => None,
             });
         }
-        let r = drawn.expect("the popup is painted");
-        assert!((r.min.x - 0.0).abs() < 0.5 && (r.max.x - 150.0).abs() < 0.5, "kept at the left edge, not at -40: {r:?}");
         let handle = ctx.plugin_opt::<Mirror>().expect("the mirror is on");
-        let m = handle.lock();
-        assert_eq!(m.views[&ViewportId::ROOT].anchored_rects.first().map(|a| a.1), Some(160.0), "clicks map through the same axis");
+        let axis = handle.lock().views[&ViewportId::ROOT].anchored_rects.first().map(|a| a.1);
+        (drawn.expect("the popup is painted"), axis)
+    }
+
+    /// A popup opened from the page near the window's left edge opens leftwards in a mirrored
+    /// interface: it is kept on screen, as egui keeps it in its own coordinates.
+    #[test]
+    fn popups_from_the_page_stay_on_screen() {
+        let (r, axis) = popup_from_the_page(Anchor::Edge, 10.0);
+        assert!((r.min.x - 0.0).abs() < 0.5 && (r.max.x - 150.0).abs() < 0.5, "kept at the left edge, not at -40: {r:?}");
+        assert_eq!(axis, Some(160.0), "clicks map through the same axis");
+    }
+
+    /// A popup placed over the page (a content control's list, under its field) moves with the
+    /// page and stays over the same spot, instead of opening leftwards from its left edge.
+    #[test]
+    fn popups_placed_over_the_page_move_with_it() {
+        let (r, axis) = popup_from_the_page(Anchor::InPlace, 120.0);
+        assert!((r.min.x - 220.0).abs() < 0.5 && (r.max.x - 370.0).abs() < 0.5, "at 120–270 moved by 100, not 70–220: {r:?}");
+        assert_eq!(axis, Some(490.0), "clicks map through its centre");
     }
 
     /// Hebrew typed into a field, laid out right to left by egui: in a mirrored interface the

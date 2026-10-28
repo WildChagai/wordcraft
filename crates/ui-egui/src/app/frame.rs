@@ -84,11 +84,21 @@ impl WordApp {
         let moved = |app: &WordApp| app.windows.shown() != window;
         // A right-to-left interface is mirrored as it is painted, each window on its own; the page
         // and the popups placed from it move without flipping.
-        let anchored: Vec<egui::Id> = self
+        // The context menu and the selection bar open from a point; the content control's list
+        // (under its field) and the ink replay bar (centred on the page) stay where they are.
+        let anchored: Vec<(egui::Id, mirror::Anchor)> = self
             .canvas
             .context_menu_id
+            .map(|id| (id, mirror::Anchor::Edge))
             .into_iter()
-            .chain(["wc_mini_toolbar", "content_control_popup", "ink_replay_bar"].map(egui::Id::unique))
+            .chain(
+                [
+                    ("wc_mini_toolbar", mirror::Anchor::Edge),
+                    ("content_control_popup", mirror::Anchor::InPlace),
+                    ("ink_replay_bar", mirror::Anchor::InPlace),
+                ]
+                .map(|(name, anchor)| (egui::Id::unique(name), anchor)),
+            )
             .collect();
         mirror::configure(ctx, i18n::current().rtl(), self.canvas.view_rect, &anchored);
         content_controls::popup(self, ctx);
