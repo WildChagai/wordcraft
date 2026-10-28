@@ -17,8 +17,9 @@ struct Pen<'a> {
 /// Icons whose direction means the same in any interface: text direction, alignment, the page's
 /// own left and right (the document isn't mirrored), media controls, turning clockwise, and Latin
 /// letters read together (`x²`, `ab¹`, `ab-`/`cd`). A mirrored interface keeps them as drawn;
-/// every other icon (undo, indent, bullets, numbering, chevrons) mirrors with the interface, its
-/// letters moving with it, as in right-to-left Word.
+/// every other icon (undo, increase and decrease indent, bullets, numbering, chevrons) mirrors
+/// with the interface, its letters moving with it. `indentLeft` and `indentRight` mark the
+/// paragraph's left and right indent, the page's own sides, so they keep theirs.
 const KEEP_DIRECTION: &[&str] = &[
     "subscript",
     "superscript",

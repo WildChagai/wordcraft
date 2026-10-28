@@ -32,7 +32,7 @@ pub fn inspect(app: &mut WordApp, ctx: &egui::Context) -> Value {
         "pages": app.canvas.page_rects.iter().map(|r| drawn(*r)).map(|r| [r.left(), r.top(), r.width(), r.height()]).collect::<Vec<_>>(),
         "scale": app.canvas.scale,
         "caret": caret,
-        "balloons": app.canvas.balloon_rects.iter().map(|(id, r)| (id, drawn(*r))).map(|(id, r)| json!({"id": id, "rect": [r.left(), r.top(), r.width(), r.height()]})).collect::<Vec<_>>(),
+        "balloons": app.canvas.balloon_rects.iter().map(|(id, r)| (id, crate::mirror::element_to_window(ctx, viewport, *r))).map(|(id, r)| json!({"id": id, "rect": [r.left(), r.top(), r.width(), r.height()]})).collect::<Vec<_>>(),
         "balloon": app.canvas.balloon,
         "focused": app.canvas.focused,
         "title": app.title_stem(),

@@ -343,6 +343,18 @@ pub fn page_to_window(ctx: &Context, viewport: ViewportId, r: Rect) -> Rect {
     }
 }
 
+/// Where the mirror draws `r`, an element of the frame of the window `viewport` (logical), as
+/// the pointer finds it: on the page it moves with it, over the page in a floating layer (a
+/// floating comment) it flips with the interface.
+pub fn element_to_window(ctx: &Context, viewport: ViewportId, r: Rect) -> Rect {
+    let Some(handle) = ctx.plugin_opt::<Mirror>() else { return r };
+    let m = handle.lock();
+    match m.views.get(&viewport) {
+        Some(view) if view.on => view.span.map_or(r, |span| view.place(span, r)),
+        _ => r,
+    }
+}
+
 fn flip_x((min, max): (f32, f32), x: f32) -> f32 {
     min + max - x
 }
@@ -804,6 +816,9 @@ mod tests {
         ctx.add_plugin(Mirror { views: HashMap::from([(second, m)]), ending: None });
         assert_eq!(page_to_window(&ctx, second, r(5.0, 9.0, 5.0)), r(45.0, 49.0, 5.0), "ui.inspect's page rectangles, as drawn");
         assert_eq!(page_to_window(&ctx, ViewportId::ROOT, r(5.0, 9.0, 5.0)), r(5.0, 9.0, 5.0), "another window isn't mirrored");
+        assert_eq!(element_to_window(&ctx, second, r(5.0, 9.0, 5.0)), r(45.0, 49.0, 5.0), "a balloon in the margin: with the page");
+        assert_eq!(element_to_window(&ctx, second, r(52.0, 56.0, 5.0)), r(44.0, 48.0, 5.0), "a floating comment: flipped");
+        assert_eq!(element_to_window(&ctx, ViewportId::ROOT, r(52.0, 56.0, 5.0)), r(52.0, 56.0, 5.0), "another window isn't mirrored");
     }
 
     /// Each window is mirrored on its own: what one window's pass learns (its size, its page)
