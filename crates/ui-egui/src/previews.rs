@@ -211,14 +211,20 @@ impl Previews {
     }
 
     /// Fonts were added or removed: list the families again and redraw the entries of
-    /// `families` (an entry drawn before its font was added shows the fallback face).
+    /// `families` (an entry drawn before its font was added shows the fallback face), with
+    /// every language's sample: one drawn in another interface language comes back with it.
     pub fn fonts_changed(&mut self, ctx: &egui::Context, families: impl Iterator<Item = String>) {
         self.families = None;
         self.east_asian = None;
+        let mut samples: Vec<Option<&str>> = crate::i18n::Lang::all().map(|l| l.font_sample()).collect();
+        samples.push(None);
+        samples.sort_unstable();
+        samples.dedup();
         ctx.data_mut(|d| {
             for f in families {
-                d.remove::<TextureHandle>(egui::Id::unique(entry_key(&f, None)));
-                d.remove::<TextureHandle>(egui::Id::unique(entry_key(&f, crate::i18n::current().font_sample())));
+                for &sample in &samples {
+                    d.remove::<TextureHandle>(egui::Id::unique(entry_key(&f, sample)));
+                }
             }
         });
     }

@@ -408,3 +408,26 @@ fn font_menu_entries_take_the_theme_text_colour() {
         assert_eq!(images, 1, "{theme:?}: the entry draws its rendered name");
     }
 }
+
+/// A font added again redraws its entries in every language's sample, not only the current
+/// language's: switching back to Hebrew after reinstalling a font in English doesn't show the
+/// entry drawn before the font was removed.
+#[test]
+fn a_changed_font_redraws_its_entries_in_every_language() {
+    let Some(sample) = crate::i18n::Lang::all().find_map(|l| l.font_sample()) else {
+        eprintln!("skipped: no language with a font sample embedded");
+        return;
+    };
+    let ctx = egui::Context::default();
+    let mut previews = Previews::default();
+    let keys = [entry_key("Reinstalled", None), entry_key("Reinstalled", Some(sample)), entry_key("Untouched", Some(sample))];
+    for key in &keys {
+        let tex = ctx.load_texture(key, egui::ColorImage::filled([1, 1], egui::Color32::WHITE), egui::TextureOptions::LINEAR);
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(key), tex));
+    }
+    previews.fonts_changed(&ctx, ["Reinstalled".to_string()].into_iter());
+    let cached = |key: &String| ctx.data(|d| d.get_temp::<TextureHandle>(egui::Id::unique(key))).is_some();
+    assert!(!cached(&keys[0]), "the plain entry is redrawn");
+    assert!(!cached(&keys[1]), "the entry with another language's sample is redrawn too");
+    assert!(cached(&keys[2]), "another family's entry is kept");
+}
