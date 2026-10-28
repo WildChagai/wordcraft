@@ -196,9 +196,17 @@ pub fn shape_visual(face: &FontFace, text: &str, features: &[Feature], map: impl
         let (levels, runs) = info.visual_runs(para, para.range.clone());
         for r in runs {
             let Some(sub) = text.get(r.clone()) else { continue };
-            let mut g = shape_dir(face, sub, features, &map, levels[r.start].is_rtl());
+            let rtl = levels[r.start].is_rtl();
+            let mut g = shape_dir(face, sub, features, &map, rtl);
             for x in &mut g {
                 x.cluster += r.start;
+            }
+            if rtl {
+                // Drawn last character first: each script run comes back that way from the
+                // shaper, but the runs themselves (a Hebrew word, then an Arabic one) in text order.
+                let mut groups = cluster_groups(g);
+                groups.sort_by_key(|grp| std::cmp::Reverse(grp.first().map_or(0, |f| f.cluster)));
+                g = groups.into_iter().flatten().collect();
             }
             out.extend(g);
         }
@@ -216,6 +224,13 @@ pub fn shape_run(face: &FontFace, text: &str, features: &[Feature], map: impl Fn
         return g;
     }
     // Visual (clusters descending) → logical, cluster by cluster.
+    let mut groups = cluster_groups(g);
+    groups.sort_by_key(|grp| grp.first().map_or(0, |f| f.cluster));
+    groups.into_iter().flatten().collect()
+}
+
+/// `g` split into its clusters, each cluster's glyphs kept in the shaper's order.
+fn cluster_groups(g: Vec<ShapedGlyph>) -> Vec<Vec<ShapedGlyph>> {
     let mut groups: Vec<Vec<ShapedGlyph>> = Vec::new();
     for x in g {
         match groups.last_mut() {
@@ -223,8 +238,7 @@ pub fn shape_run(face: &FontFace, text: &str, features: &[Feature], map: impl Fn
             _ => groups.push(vec![x]),
         }
     }
-    groups.sort_by_key(|grp| grp.first().map_or(0, |f| f.cluster));
-    groups.into_iter().flatten().collect()
+    groups
 }
 
 fn shape_dir(face: &FontFace, text: &str, features: &[Feature], map: &impl Fn(char) -> char, rtl: bool) -> Vec<ShapedGlyph> {
@@ -380,6 +394,8 @@ mod tests {
         assert_eq!(clusters("A אב"), vec![0, 1, 4, 2]);
         // A number in a Hebrew name keeps its digits in order, at the left of the letters.
         assert_eq!(clusters("אב 12"), vec![5, 6, 4, 2, 0]);
+        // Hebrew then Arabic, one right-to-left run in two scripts: the Hebrew word at the right.
+        assert_eq!(clusters("אב عرب"), vec![9, 7, 5, 4, 2, 0]);
     }
 
     #[test]
