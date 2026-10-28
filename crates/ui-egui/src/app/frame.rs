@@ -84,8 +84,9 @@ impl WordApp {
         let moved = |app: &WordApp| app.windows.shown() != window;
         // A right-to-left interface is mirrored as it is painted, each window on its own; the page
         // and the popups placed from it move without flipping.
-        // The context menu and the selection bar open from a point; the content control's list
-        // (under its field) and the ink replay bar (centred on the page) stay where they are.
+        // The context menu opens from a point; the selection bar (centred on the selection), the
+        // content control's list (under its field) and the ink replay bar (centred on the page)
+        // stay where they are.
         let anchored: Vec<(egui::Id, mirror::Anchor)> = self
             .canvas
             .context_menu_id
@@ -93,7 +94,7 @@ impl WordApp {
             .into_iter()
             .chain(
                 [
-                    ("wc_mini_toolbar", mirror::Anchor::Edge),
+                    ("wc_mini_toolbar", mirror::Anchor::InPlace),
                     ("content_control_popup", mirror::Anchor::InPlace),
                     ("ink_replay_bar", mirror::Anchor::InPlace),
                 ]
