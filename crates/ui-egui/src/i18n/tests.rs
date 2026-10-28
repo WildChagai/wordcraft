@@ -1160,15 +1160,12 @@ fn the_flatpak_manifest_pins_the_craft_i18n_rev() {
     assert!(manifest.contains("CRAFT_I18N_DIR: /run/build/wordcraft/craft-i18n"), "the build embeds the catalogs");
 }
 
-/// Hebrew, once craft-i18n has its catalog (skipped before): its locales and the saved setting
-/// pick it, and it is the one language written right to left.
+/// Hebrew, from the pinned catalogs: its locales and the saved setting pick it, and it is the one
+/// language written right to left.
 #[test]
 fn hebrew_locales_and_saved_preference_work_without_changing_the_document() {
     needs_catalogs!();
-    let Some(he) = Lang::from_code("he") else {
-        eprintln!("skipped: no Hebrew catalog embedded");
-        return;
-    };
+    let he = Lang::from_code("he").expect("the catalogs craft-i18n.rev pins have Hebrew");
     for tag in ["he", "he-IL", "he_IL.UTF-8", "HE-il", "he-Hebr-IL"] {
         assert_eq!(lang_from_tag(tag), Some(he), "{tag}");
     }

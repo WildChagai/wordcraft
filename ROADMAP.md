@@ -122,7 +122,7 @@ Also shipped: Traditional Chinese (`zh-hant`), Ukrainian (`uk`), Serbian (`sr`, 
 system-locale selection and a saved language choice (Italian also has 51 strings none of the others had yet); Estonian proofing is not included. Hungarian (`hu`) has a
 complete 2,419-entry catalog, also without proofing. Vietnamese (`vi`, #1434) has a complete
 2,448-entry catalog, also without proofing. Croatian (`hr`, #1271) has a complete catalog.
-Hebrew (`he`) gets a mirrored right-to-left interface once craft-i18n has its catalog; Hebrew proofing is
+Hebrew (`he`) has a mirrored right-to-left interface from craft-i18n's catalog; Hebrew proofing is
 not included.
 Proofing: English, Polish, Portuguese, Italian, Croatian, Turkish and Russian (spelling, grammar; hyphenation except Croatian), plus Czech, Indonesian and Spanish (system Hunspell spelling, generic checks; Spanish per variety: Spain, Mexico, Latin America, Uruguay), chosen per run from its language; Bulgarian and German hyphenation only. Word ships
 30 interface languages and proofing for ~50. Detail: [docs/localization-parity.md](docs/localization-parity.md).
