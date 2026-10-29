@@ -740,6 +740,89 @@ mod tests {
         assert!(clicked, "the click on the card as drawn reaches it");
     }
 
+    /// Run `ui` over `events` in a mirrored 400 × 300 window with no page, one frame per entry.
+    fn mirrored_frames(ctx: &Context, frames: Vec<Vec<Event>>, ui: impl Fn(&mut Ui)) {
+        for events in frames {
+            configure(ctx, true, None, &[], &[]);
+            let input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0))), events, ..Default::default() };
+            // A frame a sixtieth of a second after the last, as a window draws them.
+            let input = RawInput { time: Some(ctx.input(|i| i.time) + 1.0 / 60.0), ..input };
+            let mut out = ctx.run_ui(input, &ui);
+            out.textures_delta.clear();
+        }
+    }
+
+    /// A drag from `at` to `to`, one event a frame, after two frames that lay the widgets out: the
+    /// pointer comes over `at`, presses, moves halfway and the rest, and lets go.
+    fn drag_frames(at: Pos2, to: Pos2) -> Vec<Vec<Event>> {
+        let button = |pos, pressed| Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let mid = at.lerp(to, 0.5);
+        vec![
+            vec![],
+            vec![],
+            vec![Event::PointerMoved(at)],
+            vec![button(at, true)],
+            vec![Event::PointerMoved(mid)],
+            vec![Event::PointerMoved(to)],
+            vec![button(to, false)],
+        ]
+    }
+
+    /// The interface's scroll bars flip with it, to the left of what they scroll, and a drag on
+    /// one where it is drawn scrolls: the pointer flips back onto the bar.
+    #[test]
+    fn a_scroll_bar_drawn_at_the_left_scrolls_when_dragged() {
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::Queryable;
+        let offset = std::cell::Cell::new(0.0);
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(400.0, 300.0)).with_step_dt(1.0 / 60.0).build_ui(|ui| {
+            configure(ui.ctx(), true, None, &[], &[]);
+            let out = egui::ScrollArea::vertical().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).show(ui, |ui| {
+                ui.allocate_exact_size(egui::vec2(300.0, 3000.0), egui::Sense::hover());
+            });
+            offset.set(out.state.clamped_offset().y);
+        });
+        h.ctx.all_styles_mut(|s| s.spacing.scroll = egui::style::ScrollStyle::solid());
+        for _ in 0..4 {
+            h.step();
+        }
+        // Where it is drawn: the mirror reports the accessibility bounds as drawn.
+        let bar = h.query_all_by_role(Role::ScrollBar).map(|n| n.rect()).find(|r| r.height() > r.width()).expect("the vertical scroll bar");
+        // The 300-point content is drawn against the window's right edge, at 100–400.
+        assert!(bar.max.x <= 100.0, "the bar is drawn left of the content: {bar:?}");
+        let button = |pos, pressed| Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let from = pos2(bar.center().x, bar.top() + 8.0);
+        h.event(Event::PointerMoved(from));
+        h.step();
+        h.event(button(from, true));
+        h.step();
+        for k in 1..=6 {
+            h.event(Event::PointerMoved(from + egui::vec2(0.0, 100.0) * (k as f32 / 6.0)));
+            h.step();
+        }
+        h.event(button(from + egui::vec2(0.0, 100.0), false));
+        h.step();
+        drop(h);
+        assert!(offset.get() > 100.0, "dragging the bar down scrolls down: {}", offset.get());
+    }
+
+    /// A number dragged sideways grows in the reading direction: leftwards in a mirrored
+    /// interface, so dragging it right lowers it.
+    #[test]
+    fn a_number_dragged_right_in_the_mirrored_interface_goes_down() {
+        let ctx = Context::default();
+        let (value, field) = (std::cell::Cell::new(50.0_f64), std::cell::Cell::new(Rect::NOTHING));
+        let show = |ui: &mut Ui| {
+            let mut v = value.get();
+            field.set(ui.add(egui::DragValue::new(&mut v).speed(1.0)).rect);
+            value.set(v);
+        };
+        mirrored_frames(&ctx, vec![vec![]], show);
+        let at = pos2(400.0 - field.get().center().x, field.get().center().y);
+        mirrored_frames(&ctx, drag_frames(at, at + egui::vec2(30.0, 0.0)), show);
+        assert!(value.get() < 50.0, "dragged right, the number goes down: {}", value.get());
+    }
+
     /// A popup opened from the page near the window's left edge opens leftwards in a mirrored
     /// interface: it is kept on screen, as egui keeps it in its own coordinates.
     #[test]
